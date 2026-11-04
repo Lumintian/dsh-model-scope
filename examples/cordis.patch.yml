@@ -1,0 +1,25 @@
+# 示例：把下面任意一段复制到 profile 的 cordis.patch.yml
+# （$DSH_HOME/profiles/<profile>/cordis.patch.yml）。同一个 id 只能写一段。
+
+# 1. 默认全部显示，只隐藏图片模型和几个不用的模型；常用的排在前面。
+- id: model-scope
+  config:
+    mode: all
+    include:
+      - 'cpa-home/gpt-5.5'        # 精确：provider/模型
+      - 'cpa-home/gpt-6-*'        # 通配符
+      - 'claude-sonnet-*'         # 只写模型名：所有 provider 里的都算
+    exclude:
+      - '*/gpt-image-*'
+      - '/-(preview|exp)$/i'      # 正则：以 -preview 或 -exp 结尾的
+    providerOrder: [cpa-home, openrouter]
+
+# 2. 白名单：只显示这几个模型，按这个顺序。
+# - id: model-scope
+#   config:
+#     mode: include
+#     include:
+#       - 'cpa-home/gpt-5.5'
+#       - 'cpa-home/gpt-6-luna'
+#       - 'deepseek-official/*'
+#     keepDefault: true           # 默认模型不在列表里也照样显示
