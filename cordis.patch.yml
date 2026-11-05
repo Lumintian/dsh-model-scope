@@ -1,0 +1,11 @@
+# Layer applied when a dsh profile lists this bundle. Configure the row from
+# your profile's own cordis.patch.yml (same id), or with the /model-scope command.
+- insert:
+    - id: model-scope
+      name: '@lumintian/dsh-model-scope'
+      config:
+        mode: all
+        include: []
+        exclude: []
+        providerOrder: []
+        keepDefault: true
