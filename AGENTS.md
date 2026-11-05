@@ -16,8 +16,10 @@ DeepSeek Harness（dsh）的 Cordis 插件：按 `mode` / `include` / `exclude` 
 - `src/patch.ts`：可还原的方法包装（特性检测、包装 Cordis 代理背后的原始实例、只在自己仍是最外层时删除）。
 - `src/ask.ts`：提问卡片（`ctx.userQuestions`）的封装。
 - `src/commands.ts`：`/model-scope` 菜单和参数，通过 `CommandHost` 访问配置和目录，便于测试。
-- `client/client.js`：浏览器端，手写的 dsh lazy-CJS factory（`window.__ModuleLoader__.load`），不构建、不 `require` 任何模块。注册收藏轮切快捷键、`/fav`、`/fav-next`、`/fav-prev`，并给宿主的 `/model-scope` 挂裸调用装饰。收藏从 `configForms.get('model-scope')` 读，模型从 `modelDirectories.directoryFor(sessionId)` 读、用它的 `select()` 切换。
-- `tests/`：`scope.test.ts` 单元测试；`commands.test.ts` 用脚本化的卡片回答驱动命令；`plugin.e2e.test.ts` 在真实 Cordis + dsh-llm 运行时里分别模拟 web 和 ACP profile；`client.test.ts` 按客户端模块系统的方式加载 `client/client.js` 并用模拟服务驱动。
+- `src/manage.ts`：命令/管理页共用的精确隐藏、恢复和配置差异；完整管理视图、收藏与组内排序动作。保留手写规则，不把隐藏或仅受默认保护的模型意外加入白名单。
+- `src/remote.ts`：可选的公开 Typert 管理服务，严格手写描述符，提供只读 `snapshot` / `plan`；不直接写配置。
+- `client/client.js`：浏览器端，手写的 dsh lazy-CJS factory（`window.__ModuleLoader__.load`），不构建；仅管理页按需 `require('react')` 使用宿主 React。通过公开 `settings.section` 提供模型管理，真实写入使用 `configForms.mutate(ops, revision)`。注册收藏轮切快捷键、`/fav`、`/fav-next`、`/fav-prev`，并给宿主的 `/model-scope` 挂裸调用装饰。收藏从 `configForms.get('model-scope')` 读，模型从 `modelDirectories.directoryFor(sessionId)` 读、用它的 `select()` 切换。
+- `tests/`：`manage.test.ts` 覆盖精确管理动作、手写规则/白名单保护与只读计划服务；`scope.test.ts` 单元测试；`commands.test.ts` 用脚本化的卡片回答驱动命令；`plugin.e2e.test.ts` 在真实 Cordis + dsh-llm 运行时里分别模拟 web 和 ACP profile；`client.test.ts` 按客户端模块系统的方式加载 `client/client.js` 并用模拟服务驱动。
 
 ## 必须保持的行为
 

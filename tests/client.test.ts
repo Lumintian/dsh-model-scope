@@ -8,6 +8,8 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
+import type { InvocationDescriptor } from '@deepseek-ai/dsh-typert-protocol'
+import { managementDescriptors, type ManagementSnapshot } from '../src/remote.ts'
 
 interface Registered {
   id: string
@@ -21,6 +23,15 @@ interface ClientModule {
   internals: {
     favoriteChoices(groups: unknown[], patterns: string[]): Array<{ provider: string; model: string; name: string }>
     step(choices: unknown[], current: unknown, delta: number): { choice: { model: string }; index: number; same: boolean } | undefined
+    managementDescriptors: InvocationDescriptor[]
+    managementGroups(providers: ManagementSnapshot['providers'], query: string, filter: string): ManagementSnapshot['providers']
+    createManagementController(remote: unknown, form: unknown, t: (key: string) => string): {
+      start(): void
+      stop(): void
+      writable(): boolean
+      change(action: string, provider: string, model: string): Promise<void>
+      getSnapshot(): { error: string }
+    }
   }
 }
 
@@ -45,7 +56,7 @@ const GROUPS = [
   { id: 'openrouter', name: 'OpenRouter', models: [{ id: 'claude-x', name: '★ Claude X' }] },
 ]
 
-test('the script registers under the package name and requires nothing', () => {
+test('legacy client paths register under the package name without requiring optional UI modules', () => {
   const { id, module } = loadClient()
   assert.equal(id, '@lumintian/dsh-model-scope')
   const manifest = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { name: string }
@@ -197,4 +208,66 @@ test('/fav lists favorites with the current one active; /fav-next cycles; /model
   app.decorations.get('model-scope')!.ui.run(session)
   await app.settle()
   assert.deepEqual(app.executed, ['/model-scope'])
+})
+
+test('management wire contracts match; writes use form revision fencing and stop on stale reads or unmount', async () => {
+  const { internals } = loadClient().module
+  const wireShape = (value: unknown) => JSON.parse(JSON.stringify(value)) as unknown
+  assert.deepEqual(wireShape(internals.managementDescriptors), wireShape(managementDescriptors))
+  let revision = 7
+  const listeners = new Set<() => void>()
+  const writes: Array<{ ops: unknown; revision: number }> = []
+  const settle = () => new Promise(resolve => setImmediate(resolve))
+  const data = (): ManagementSnapshot => ({
+    revision, writable: true, mode: 'all', surface: 'web', issues: [],
+    providers: [{ id: 'alpha', name: 'Alpha', models: [{
+      id: 'a1', name: 'First model', visible: true, ruleHidden: false, favorite: false,
+      default: false, reason: '', up: false, down: false,
+    }] }],
+  })
+  const ops = [{ op: 'set', path: ['exclude'], value: ['alpha/a1'] }]
+  let nextPlan: Promise<unknown> | undefined
+  const remote = {
+    snapshot: async () => ({ ok: true, value: data() }),
+    plan: async () => nextPlan ?? { ok: true, value: { ok: true, ops, revision } },
+  }
+  const form = {
+    getSnapshot: () => ({ status: 'ready', writable: true, revision, value: {} }),
+    subscribe: (fn: () => void) => { listeners.add(fn); return () => { listeners.delete(fn) } },
+    mutate: async (mutation: unknown, expectedRevision: number) => {
+      writes.push({ ops: mutation, revision: expectedRevision })
+      revision++
+      for (const listener of listeners) listener()
+      return true
+    },
+  }
+  assert.equal(internals.managementGroups(data().providers, 'alpha', 'visible').length, 1)
+  assert.equal(internals.managementGroups(data().providers, 'no match', 'all').length, 0)
+  const controller = internals.createManagementController(remote, form, key => key)
+  controller.start()
+  try {
+    await settle()
+    assert.equal(controller.writable(), true)
+    await controller.change('hide', 'alpha', 'a1')
+    assert.deepEqual(writes, [{ ops, revision: 7 }])
+
+    let resolvePlan!: (value: unknown) => void
+    nextPlan = new Promise(resolve => { resolvePlan = resolve })
+    const stale = controller.change('hide', 'alpha', 'a1')
+    revision++
+    resolvePlan({ ok: true, value: { ok: true, ops, revision: 8 } })
+    await stale
+    assert.equal(writes.length, 1, 'a plan cannot overwrite a newer form snapshot')
+    assert.equal(controller.getSnapshot().error, 'manage.stale')
+
+    nextPlan = new Promise(resolve => { resolvePlan = resolve })
+    const late = controller.change('hide', 'alpha', 'a1')
+    controller.stop()
+    resolvePlan({ ok: true, value: { ok: true, ops, revision } })
+    await late
+    assert.equal(writes.length, 1, 'leaving the page before planning settles cancels the write')
+    assert.equal(listeners.size, 0)
+  } finally {
+    controller.stop()
+  }
 })

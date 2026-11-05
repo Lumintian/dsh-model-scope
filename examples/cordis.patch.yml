@@ -1,5 +1,8 @@
 # 示例：把下面任意一段复制到 profile 的 cordis.patch.yml
 # （$DSH_HOME/profiles/<profile>/cordis.patch.yml）。同一个 id 只能写一段。
+# Web 可在「设置 → 模型管理」里收藏、隐藏/恢复、置顶与上下移动；写入的仍是下面这些字段。
+# favorites 只决定收藏轮切顺序；模型列表排序由 include 决定，二者互不联动。
+# 手写通配符/正则不会被逐行操作删除；若恢复显示/取消收藏受它们控制，请在配置中调整。
 
 # 1. 默认全部显示，只隐藏图片模型和几个不用的模型；常用的排在前面。
 - id: model-scope

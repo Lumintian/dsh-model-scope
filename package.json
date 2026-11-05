@@ -1,6 +1,6 @@
 {
   "name": "@lumintian/dsh-model-scope",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "DeepSeek Harness plugin: choose which models the model picker shows and in what order, across every provider.",
   "author": "Lumintian",
   "license": "MIT",
