@@ -40,6 +40,7 @@ import { type CommandHost, createCommands, type ProviderModels, type Surface } f
 import { Config, isMode, type ScopeSettings } from './config.ts'
 import { type AnyMethod, patchMethod } from './patch.ts'
 import { defaultOf, type ModelRef, Scope, scopeCatalog } from './scope.ts'
+import { registerManagement } from './remote.ts'
 
 export { Config } from './config.ts'
 export type { Mode, ScopeSettings } from './config.ts'
@@ -242,6 +243,8 @@ export function apply(ctx: Context, config: Config): void {
     defaultModel,
     surface,
   }
+
+  registerManagement(ctx, host, settingsNs)
 
   ctx.inject(['commands'], (child) => {
     child.effect(function* () {

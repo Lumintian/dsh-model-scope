@@ -17,6 +17,7 @@
 import { type Ask, AskCancelled, AskUnavailable, type Choice, multiple, type Question, single } from './ask.ts'
 import { DEFAULT_SETTINGS, isMode, type Mode, type ScopeSettings } from './config.ts'
 import { exactPattern, isExactFor, type ModelRef, Scope } from './scope.ts'
+import { changedFields, cloneSettings, hideIn, showIn } from './manage.ts'
 
 export type CommandResult = { kind: 'success'; text: string } | { kind: 'error'; text: string }
 
@@ -195,46 +196,6 @@ function modelStates(provider: ProviderModels, scope: Scope, defaultRef: ModelRe
       note: [favorite, note].filter(Boolean).join(' · '),
     }
   })
-}
-
-/** Hide one model in a settings draft. */
-function hideIn(draft: ScopeSettings, ref: ModelRef): void {
-  // In include mode the exact allow-list entry is what shows it. In all mode an
-  // entry only sets its priority, which is kept for when it is shown again.
-  if (draft.mode === 'include') draft.include = draft.include.filter(pattern => !isExactFor(pattern, ref))
-  if (new Scope(draft).isVisible(ref) && !draft.exclude.some(pattern => isExactFor(pattern, ref))) {
-    draft.exclude = [...draft.exclude, exactPattern(ref)]
-  }
-}
-
-/** Show one model in a settings draft; returns the rule still hiding it, if any. */
-function showIn(draft: ScopeSettings, ref: ModelRef): string | undefined {
-  draft.exclude = draft.exclude.filter(pattern => !isExactFor(pattern, ref))
-  if (draft.mode === 'include' && new Scope(draft).includeIndex(ref) === undefined) {
-    draft.include = [...draft.include, exactPattern(ref)]
-  }
-  return new Scope(draft).excludedBy(ref)
-}
-
-function cloneSettings(settings: ScopeSettings): ScopeSettings {
-  return {
-    mode: settings.mode,
-    include: [...settings.include],
-    exclude: [...settings.exclude],
-    providerOrder: [...settings.providerOrder],
-    keepDefault: settings.keepDefault,
-    favorites: [...settings.favorites],
-    markFavorites: settings.markFavorites,
-  }
-}
-
-/** Only the fields that differ, for a minimal settings write. */
-function changedFields(before: ScopeSettings, after: ScopeSettings): Partial<ScopeSettings> {
-  const patch: Partial<ScopeSettings> = {}
-  for (const key of Object.keys(after) as Array<keyof ScopeSettings>) {
-    if (JSON.stringify(before[key]) !== JSON.stringify(after[key])) (patch as Record<string, unknown>)[key] = after[key]
-  }
-  return patch
 }
 
 export function createCommands(host: CommandHost): ScopeCommand[] {
