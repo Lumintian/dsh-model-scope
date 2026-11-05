@@ -72,6 +72,8 @@ export function apply(ctx: Context, config: Config): void {
       exclude: plainList(config.exclude.get()),
       providerOrder: plainList(config.providerOrder.get()),
       keepDefault: config.keepDefault.get() !== false,
+      favorites: plainList(config.favorites.get()),
+      markFavorites: config.markFavorites.get() !== false,
     }
   }
 

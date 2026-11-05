@@ -1,6 +1,6 @@
 {
   "name": "@lumintian/dsh-model-scope",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "DeepSeek Harness plugin: choose which models the model picker shows and in what order, across every provider.",
   "author": "Lumintian",
   "license": "MIT",
@@ -17,7 +17,8 @@
     "dsh-plugin",
     "deepseek-harness",
     "model-picker",
-    "model-visibility"
+    "model-visibility",
+    "favorites"
   ],
   "type": "module",
   "main": "lib/index.js",
@@ -27,11 +28,15 @@
       "types": "./lib/index.d.ts",
       "default": "./lib/index.js"
     },
+    "./client": {
+      "default": "./client/client.js"
+    },
     "./package.json": "./package.json"
   },
   "files": [
     "lib/**/*.js",
     "lib/**/*.d.ts",
+    "client/client.js",
     "cordis.patch.yml",
     "examples/",
     "README.md",
@@ -41,6 +46,18 @@
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-api-remotes",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-shortcuts",
+        "@deepseek-ai/dsh-client-ui-commands",
+        "@deepseek-ai/dsh-client-ui-model-selection",
+        "@deepseek-ai/dsh-client-ui-session",
+        "@deepseek-ai/dsh-client-ui-settings"
+      ]
     }
   },
   "publishConfig": {

@@ -6,6 +6,7 @@
 - **优先级**：一个有序列表，越靠前越优先。同一个 provider 分组里按它排序；分组之间，含有更靠前模型的分组排在前面。
 - **白名单模式**：只显示优先级列表里的模型，其余全部隐藏。
 - **provider 顺序**：直接指定分组的先后。
+- **收藏与轮切**：收藏常用的几个模型，用快捷键（默认 Ctrl+Alt+M）在它们之间轮流切换，或者用 `/fav` 直接挑一个。收藏的模型在选择器里带 ★。
 - **只改显示，不影响使用**：被隐藏的模型仍然可以用。正在用它的会话照常发消息，子智能体、服务端校验看到的仍是完整列表。
 - 改配置后立即生效，不用重启，打开着的模型选择器也会跟着刷新。
 
@@ -36,16 +37,35 @@ dsh plugin --profile web add @lumintian/dsh-model-scope@latest
 
 ## 快速开始（Web）
 
-在输入框里输入 `/model-scope`，**先按 Esc 关掉命令菜单再回车**（原因见下文「Web 使用须知」），会弹出操作菜单：
+在输入框里输入 `/model-scope` 回车，会弹出操作菜单：
 
 - **显示/隐藏模型**：先选 provider，再在卡片里勾选要隐藏的模型；翻到下一页可以勾选要重新显示的模型。
 - **调整模型优先级**：添加模型到优先级列表（放最前或最后）、调整某一条的位置、移除条目。
+- **收藏与轮切**：添加收藏、调整收藏顺序（也就是轮切顺序）、取消收藏。
 - **调整 provider 顺序**：选一个 provider，移到最前、上移、下移、移到最后，或恢复默认顺序。
 - **切换模式**：`all`（默认全部显示）或 `include`（白名单）。
 - **查看状态**：每个 provider 显示了几个模型、按什么顺序、隐藏了哪些。
 - **恢复默认**：清空所有设置。
 
-卡片里的每个模型都带说明：当前会话在用、默认模型、优先级第几、被哪条规则隐藏。模型很多时，卡片会按 30 个一页分页。
+卡片里的每个模型都带说明：当前会话在用、默认模型、★ 收藏、优先级第几、被哪条规则隐藏。模型很多时，卡片会按 30 个一页分页。
+
+## 收藏与轮切（Web、桌面端）
+
+先用 `/model-scope` → 收藏与轮切 → 添加模型（或 `/model-scope fav cpa-home/gpt-5.5`）收藏几个常用模型，然后：
+
+| 操作 | 作用 |
+|---|---|
+| **Ctrl+Alt+M**（macOS：⌘⌥M） | 当前会话切到下一个收藏模型 |
+| **Ctrl+Alt+Shift+M**（macOS：⌘⌥⇧M） | 切到上一个收藏模型 |
+| `/fav` | 弹出收藏列表（可搜索），选一个直接切换；当前模型打勾，角标是轮切顺序 |
+| `/fav-next`、`/fav-prev` | 和快捷键一样，适合没法用快捷键的时候 |
+
+- 轮切顺序就是 `favorites` 列表的顺序。当前模型不是收藏时，「下一个」从第一个开始，「上一个」从最后一个开始；到头后绕回。
+- 切换后输入框上方会提示「已切换到 GLM-5（收藏 2/3）」，选择器按钮也会跟着变。切换和在选择器里手动选是一样的：推理档位用新模型的默认值，dsh 也会把它记成默认模型。
+- 只在选择器里**看得到**的收藏之间轮切：被隐藏的收藏、暂时没有注册的 provider 会被跳过。
+- 快捷键可以改：按 Ctrl+/ 打开 dsh 的快捷键面板，找「切换到下一个收藏模型」「切换到上一个收藏模型」。
+- **Linux 上的 Web 版没有默认快捷键**：dsh 在 Linux 浏览器里只允许三个固定的组合键，而且都已被占用，所以只能用 `/fav-next`、`/fav-prev` 和 `/fav`。Linux 桌面端不受影响。
+- 收藏的模型在选择器里带 ★（选择器按钮上也会显示）。不想要可以设 `markFavorites: false`。
 
 ## 配置
 
@@ -63,6 +83,10 @@ dsh plugin --profile web add @lumintian/dsh-model-scope@latest
       - '*/gpt-image-*'
     providerOrder: [cpa-home, openrouter]   # 可选：分组顺序
     keepDefault: true          # 默认模型即使被隐藏也保留在列表里
+    favorites:                 # 收藏，按这个顺序轮切
+      - 'cpa-home/gpt-5.5'
+      - 'deepseek-official/deepseek-chat'
+    markFavorites: true        # 收藏的模型名前加 ★
 ```
 
 | 字段 | 默认值 | 说明 |
@@ -72,6 +96,8 @@ dsh plugin --profile web add @lumintian/dsh-model-scope@latest
 | `exclude` | `[]` | 隐藏规则，两种模式都生效，优先级高于 `include`。 |
 | `providerOrder` | `[]` | provider ID 列表，列出的分组按这个顺序排在最前，没列出的排在后面。 |
 | `keepDefault` | `true` | dsh 的默认模型（新会话默认选中的那个）总是显示，避免新会话的模型按钮变成「请选择模型」。 |
+| `favorites` | `[]` | 收藏，有序。快捷键、`/fav`、`/fav-next`、`/fav-prev` 按这个顺序在收藏之间切换。规则写法和 `include` 一样。 |
+| `markFavorites` | `true` | 在 Web 模型选择器里给收藏的模型名前加 ★。 |
 
 更多写法见 [`examples/`](examples/)。
 
@@ -104,6 +130,8 @@ dsh plugin --profile web add @lumintian/dsh-model-scope@latest
 | `/model-scope hide <规则…>` | 把规则加入 `exclude`，例如 `/model-scope hide */gpt-image-* o4-mini` |
 | `/model-scope show <规则…>` | 从 `exclude` 删掉同样写法的规则；`include` 模式下同时加入优先级列表 |
 | `/model-scope top <规则…>` | 放到优先级列表最前 |
+| `/model-scope fav [规则…]` | 加入收藏（加在末尾）；不写规则时打开收藏菜单 |
+| `/model-scope unfav <规则…>` | 取消收藏（删掉同样写法的规则） |
 | `/model-scope mode all\|include` | 切换模式；优先级列表为空时不允许切到 `include`（会隐藏所有模型） |
 | `/model-scope reset` | 恢复默认 |
 
@@ -114,7 +142,8 @@ dsh plugin --profile web add @lumintian/dsh-model-scope@latest
 这几条是 dsh Web 界面本身的行为，插件这边改变不了：
 
 - **还没聊过天的新会话里，命令结果不显示。** 命令其实已经执行了，弹出的卡片也照常显示，只是结果文字要等会话里有了第一条消息才会出现。可以直接打开模型选择器看效果。
-- **输入命令后直接回车，会选中命令菜单里高亮的那一项。** 想执行自己输入的内容，先按 Esc 关掉菜单再回车；或者用方向键在菜单里选。
+- **输入命令后直接回车，会选中命令菜单里高亮的那一项。** 例如输入 `/fav` 时菜单里还有 `/fav-next`、`/fav-prev`，高亮的是 `/fav`。想执行别的，用方向键在菜单里选。
+- 带参数的命令（例如 `/model-scope status`）照常输入、回车即可；只输入 `/model-scope` 回车会直接打开菜单。
 - **命令结果默认只显示第一行**，点一下这一行可以展开。本插件所有结果的第一行都是一句话总结。
 - **只有一道题的卡片，选完要点「提交」**；多道题的卡片点「下一题」翻页，单选题选完会自动跳到下一题。
 - 卡片等待回答时如果关掉或刷新页面，这次命令会被取消（显示 `This operation was aborted`），不会做任何修改。
@@ -134,6 +163,8 @@ dsh plugin --profile web add @lumintian/dsh-model-scope@latest
 
 ## 兼容性与原理
 
+插件分两半：服务端（宿主）一半负责过滤、排序和 `/model-scope` 命令；浏览器端一半（`client/client.js`，只在 Web 和桌面端加载）负责收藏的快捷键、`/fav`、`/fav-next`、`/fav-prev`，以及让 `/model-scope` 回车一次就打开菜单。浏览器端通过插件自己的设置条目读收藏，所以 profile 里本插件条目的 id 要保持为 `model-scope`（安装时默认就是）。
+
 dsh 没有给模型列表留扩展点。本插件在 dsh 的服务实例上包装了几个方法：web 和桌面端的 profile 里包装模型目录接口（`sessionController.modelCatalog`），其他 profile 里包装 `llm.listModels` 和 `llm.listProviders`。配置变了，插件会发出 `llm/adapters-updated` 事件，让选择器重新拉取目录。
 
 - 启动时会先检查这些方法在不在；结构不对就放弃过滤，并在 dsh 日志里留一条 `dsh-model-scope` 警告，不会影响 dsh 启动。`/model-scope status` 也会提示插件没有生效。
@@ -148,7 +179,9 @@ pnpm check   # 类型检查 + 测试，需要 Node 24
 pnpm build   # 编译到 lib/
 ```
 
-测试用 Node 的 `node --test` 直接跑 TypeScript。`tests/plugin.e2e.test.ts` 用真实的 Cordis、dsh LLM 运行时和 Loader 挂载插件，分别模拟 web profile 和 ACP profile。
+测试用 Node 的 `node --test` 直接跑 TypeScript。`tests/plugin.e2e.test.ts` 用真实的 Cordis、dsh LLM 运行时和 Loader 挂载插件，分别模拟 web profile 和 ACP profile。`tests/client.test.ts` 按 dsh 客户端模块系统的方式加载 `client/client.js`，用模拟的快捷键、模型目录、命令服务驱动它。
+
+浏览器端是手写的 dsh lazy-CJS factory 格式（`window.__ModuleLoader__.load({ id, factory })`），不需要构建，也不 `require` 任何模块，只用 Context 上的服务。
 
 ## 许可
 

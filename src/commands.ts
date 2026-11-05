@@ -61,6 +61,21 @@ export interface ScopeCommand {
   run(invocation: Invocation): Promise<CommandResult>
 }
 
+type ListField = 'include' | 'favorites'
+
+interface ListSpec {
+  field: ListField
+  header: string
+  noun: string
+  intro: string
+  addHint: string
+  whereLast: string
+  removeHint: string
+}
+
+/** How to cycle, shown after favorites change. The keys are the browser half's defaults. */
+const FAVORITE_USAGE = '轮切：Ctrl+Alt+M 下一个、Ctrl+Alt+Shift+M 上一个（macOS 用 ⌘⌥M），或输入 /fav-next、/fav-prev；/fav 直接挑一个。快捷键可在 dsh 的快捷键设置里改。'
+
 const ok = (text: string): CommandResult => ({ kind: 'success', text })
 const fail = (text: string): CommandResult => ({ kind: 'error', text })
 const cancelled = (): CommandResult => ok('已取消，没有做任何修改')
@@ -84,6 +99,8 @@ const USAGE = [
   '/model-scope hide <规则…>    隐藏（加入 exclude）',
   '/model-scope show <规则…>    取消隐藏；include 模式下同时加入优先级列表',
   '/model-scope top <规则…>     放到优先级列表最前',
+  '/model-scope fav [规则…]     加入收藏；不写规则时打开收藏菜单',
+  '/model-scope unfav <规则…>   取消收藏',
   '/model-scope mode all|include',
   '/model-scope reset           恢复默认',
   '规则写法：provider/模型 或 模型；* 是通配符；/正则/flags 写正则',
@@ -169,7 +186,14 @@ function modelStates(provider: ProviderModels, scope: Scope, defaultRef: ModelRe
           : explained.includeIndex !== undefined
             ? `优先级 #${explained.includeIndex + 1}`
             : ''
-    return { ref, name: model.name, visible: explained.visible, ruleHidden: explained.reason !== 'shown', note }
+    const favorite = scope.favoriteIndex(ref) !== undefined ? '★ 收藏' : ''
+    return {
+      ref,
+      name: model.name,
+      visible: explained.visible,
+      ruleHidden: explained.reason !== 'shown',
+      note: [favorite, note].filter(Boolean).join(' · '),
+    }
   })
 }
 
@@ -199,6 +223,8 @@ function cloneSettings(settings: ScopeSettings): ScopeSettings {
     exclude: [...settings.exclude],
     providerOrder: [...settings.providerOrder],
     keepDefault: settings.keepDefault,
+    favorites: [...settings.favorites],
+    markFavorites: settings.markFavorites,
   }
 }
 
@@ -247,7 +273,7 @@ export function createCommands(host: CommandHost): ScopeCommand[] {
     const defaultRef = host.defaultModel()
     const { shown, total } = summary(catalog, scope)
     const lines = [
-      `模型范围：${settings.mode} 模式 · 显示 ${shown}/${total} 个模型 · 优先级 ${settings.include.length} 条 · ${surfaceNote()}`,
+      `模型范围：${settings.mode} 模式 · 显示 ${shown}/${total} 个模型 · 优先级 ${settings.include.length} 条${settings.favorites.length > 0 ? ` · 收藏 ${settings.favorites.length} 条` : ''} · ${surfaceNote()}`,
     ]
     const visible = new Map<string, string[]>()
     for (const provider of catalog) {
@@ -265,7 +291,8 @@ export function createCommands(host: CommandHost): ScopeCommand[] {
       }
       const states = modelStates(provider, scope, defaultRef)
       const hidden = states.filter(state => !state.visible).map(state => state.ref.model)
-      const order = scope.orderModels(provider.id, states, state => state.ref.model, defaultRef).map(state => state.ref.model)
+      const order = scope.orderModels(provider.id, states, state => state.ref.model, defaultRef)
+        .map(state => scope.favoriteIndex(state.ref) !== undefined ? `★${state.ref.model}` : state.ref.model)
       lines.push(`- ${providerLabel(provider)}：显示 ${order.length}/${states.length}`
         + (order.length > 0 ? ` · 顺序：${clip(order, 6)}` : '')
         + (hidden.length > 0 ? ` · 隐藏：${clip(hidden)}` : ''))
@@ -274,6 +301,9 @@ export function createCommands(host: CommandHost): ScopeCommand[] {
       ? `优先级列表（include）：${settings.include.map((pattern, index) => `${index + 1}. ${pattern}`).join('  ')}`
       : '优先级列表（include）：空')
     lines.push(settings.exclude.length > 0 ? `隐藏规则（exclude）：${settings.exclude.join('、')}` : '隐藏规则（exclude）：空')
+    lines.push(settings.favorites.length > 0
+      ? `收藏（favorites，轮切顺序）：${settings.favorites.map((pattern, index) => `${index + 1}. ${pattern}`).join('  ')}`
+      : '收藏（favorites）：空')
     if (settings.providerOrder.length > 0) lines.push(`provider 顺序：${settings.providerOrder.join(' → ')}`)
     lines.push(`默认模型始终显示（keepDefault）：${settings.keepDefault ? '是' : '否'}`)
     for (const issue of scope.issues) lines.push(`⚠ 无效规则，已忽略：${issue}`)
@@ -365,34 +395,57 @@ export function createCommands(host: CommandHost): ScopeCommand[] {
     return ok(lines.join('\n'))
   }
 
-  /** Priority list: add models, move one entry, or remove entries. */
-  const priority = async (ask: Ask): Promise<CommandResult> => {
-    const before = host.read()
-    const list = before.include
+  /** One editable ordered list: the priority list (`include`) or the favorites. */
+  const LISTS: Record<ListField, ListSpec> = {
+    include: {
+      field: 'include',
+      header: '优先级',
+      noun: '优先级列表',
+      intro: '优先级列表越靠前越优先，同一 provider 分组里按它排序。',
+      addHint: '放到列表最前或最后',
+      whereLast: '排在已有条目后面，但仍在没列出的模型前面',
+      removeHint: '从优先级列表删掉（模型本身不会被隐藏，除非是 include 模式）',
+    },
+    favorites: {
+      field: 'favorites',
+      header: '收藏',
+      noun: '收藏',
+      intro: '快捷键和 /fav-next、/fav-prev 按这个顺序在收藏之间轮切，/fav 可以直接挑一个。',
+      addHint: '放到收藏最前或最后',
+      whereLast: '排在已有收藏后面',
+      removeHint: '取消收藏（模型本身照常显示）',
+    },
+  }
+
+  /** List menu: add models, move one entry, or remove entries. */
+  const listMenu = async (ask: Ask, field: ListField): Promise<CommandResult> => {
+    const spec = LISTS[field]
+    const list = host.read()[field]
     const actions: Choice[] = [
-      { label: '添加模型', description: '选 provider 再勾选模型，放到列表最前或最后' },
+      { label: '添加模型', description: `选 provider 再勾选模型，${spec.addHint}` },
       ...list.length > 0
         ? [
           { label: '调整一条的位置', description: '最前 / 上移 / 下移 / 最后' },
-          { label: '移除条目', description: '从优先级列表删掉（模型本身不会被隐藏，除非是 include 模式）' },
+          { label: '移除条目', description: spec.removeHint },
         ]
         : [],
     ]
     const answers = await ask([{
       id: 'action',
-      header: '优先级',
-      question: `优先级列表越靠前越优先，同一 provider 分组里按它排序。当前：${list.length > 0 ? list.join(' → ') : '空'}`,
+      header: spec.header,
+      question: `${spec.intro}当前：${list.length > 0 ? list.join(' → ') : '空'}`,
       options: actions,
     }])
     const action = single(answers.get('action'))
     if (action === undefined) return cancelled()
-    if (action === '添加模型') return await addPriority(ask)
-    if (action === '调整一条的位置') return await movePriority(ask)
-    if (action === '移除条目') return await removePriority(ask)
+    if (action === '添加模型') return await addToList(ask, field)
+    if (action === '调整一条的位置') return await moveInList(ask, field)
+    if (action === '移除条目') return await removeFromList(ask, field)
     return fail(`没有「${action}」这个操作 · 可选：${actions.map(item => item.label).join('、')}`)
   }
 
-  const addPriority = async (ask: Ask): Promise<CommandResult> => {
+  const addToList = async (ask: Ask, field: ListField): Promise<CommandResult> => {
+    const spec = LISTS[field]
     const catalog = await host.catalog()
     const before = host.read()
     const scope = new Scope(before)
@@ -400,16 +453,16 @@ export function createCommands(host: CommandHost): ScopeCommand[] {
     if (!provider) return cancelled()
     const defaultRef = host.defaultModel()
     const states = modelStates(provider, scope, defaultRef)
-    const candidates = states.filter(state => !before.include.some(pattern => isExactFor(pattern, state.ref)))
-    if (candidates.length === 0) return ok(`${providerLabel(provider)} 的模型都已经在优先级列表里了`)
+    const candidates = states.filter(state => !before[field].some(pattern => isExactFor(pattern, state.ref)))
+    if (candidates.length === 0) return ok(`${providerLabel(provider)} 的模型都已经在${spec.noun}里了`)
     const ordered = scope.orderModels(provider.id, candidates, state => state.ref.model)
       .concat(candidates.filter(state => !state.visible))
     const answers = await ask([
-      ...paged('models', '模型', `${providerLabel(provider)}：勾选要加入优先级列表的模型（按分组当前顺序加入）`,
+      ...paged('models', '模型', `${providerLabel(provider)}：勾选要加入${spec.noun}的模型（按分组当前顺序加入）`,
         ordered.map(state => ({ label: state.ref.model, description: [state.name !== state.ref.model ? state.name : '', state.visible ? '' : '当前隐藏', state.note].filter(Boolean).join(' · ') })), true),
-      { id: 'where', header: '位置', question: '放在优先级列表的哪里？', options: [
+      { id: 'where', header: '位置', question: `放在${spec.noun}的哪里？`, options: [
         { label: '最前', description: '排在所有已有条目前面' },
-        { label: '最后', description: '排在已有条目后面，但仍在没列出的模型前面' },
+        { label: '最后', description: spec.whereLast },
       ] },
     ])
     const picked = pagedSelection(answers, 'models')
@@ -417,24 +470,30 @@ export function createCommands(host: CommandHost): ScopeCommand[] {
     const known = new Map(ordered.map(state => [state.ref.model, state]))
     const unknown = picked.filter(model => !known.has(model))
     if (unknown.length > 0) return fail(`${providerLabel(provider)} 没有这些模型：${unknown.join('、')}`)
-    const where = single(answers.get('where')) ?? '最前'
+    const where = single(answers.get('where')) ?? (field === 'favorites' ? '最后' : '最前')
     const chosen = ordered.filter(state => picked.includes(state.ref.model))
     const patterns = chosen.map(state => exactPattern(state.ref))
     const draft = cloneSettings(before)
-    draft.include = where === '最后' ? [...draft.include, ...patterns] : [...patterns, ...draft.include]
+    draft[field] = where === '最后' ? [...draft[field], ...patterns] : [...patterns, ...draft[field]]
     await save(draft)
     const after = new Scope(draft)
     const hiddenStill = chosen.filter(state => !after.isVisible(state.ref, sameRef(defaultRef, state.ref))).map(state => state.ref.model)
     return ok([
-      `已把 ${patterns.length} 个模型加到优先级列表${where === '最后' ? '末尾' : '最前'}`,
-      `新列表：${draft.include.join(' → ')}`,
-      ...hiddenStill.length > 0 ? [`注意：${hiddenStill.join('、')} 仍被 exclude 隐藏`] : [],
+      `已把 ${patterns.length} 个模型加到${spec.noun}${where === '最后' ? '末尾' : '最前'}`,
+      `新列表：${draft[field].join(' → ')}`,
+      ...hiddenStill.length > 0
+        ? [field === 'favorites'
+          ? `注意：${hiddenStill.join('、')} 当前被隐藏，轮切时会跳过`
+          : `注意：${hiddenStill.join('、')} 仍被 exclude 隐藏`]
+        : [],
+      ...field === 'favorites' ? [FAVORITE_USAGE] : [],
     ].join('\n'))
   }
 
-  const movePriority = async (ask: Ask): Promise<CommandResult> => {
+  const moveInList = async (ask: Ask, field: ListField): Promise<CommandResult> => {
+    const spec = LISTS[field]
     const before = host.read()
-    const labels = before.include.map((pattern, index) => `${index + 1}. ${pattern}`)
+    const labels = before[field].map((pattern, index) => `${index + 1}. ${pattern}`)
     const answers = await ask([
       { id: 'entry', header: '条目', question: '移动哪一条？', options: labels.map(label => ({ label })) },
       { id: 'move', header: '位置', question: '移到哪里？', options: [
@@ -445,9 +504,9 @@ export function createCommands(host: CommandHost): ScopeCommand[] {
     const move = single(answers.get('move'))
     if (entry === undefined || move === undefined) return cancelled()
     let index = labels.indexOf(entry)
-    if (index < 0) index = before.include.findIndex(pattern => samePattern(pattern, entry))
-    if (index < 0) return fail(`优先级列表里没有「${entry}」`)
-    const list = [...before.include]
+    if (index < 0) index = before[field].findIndex(pattern => samePattern(pattern, entry))
+    if (index < 0) return fail(`${spec.noun}里没有「${entry}」`)
+    const list = [...before[field]]
     const [item] = list.splice(index, 1)
     const target = move === '移到最前' ? 0
       : move === '上移一位' ? Math.max(0, index - 1)
@@ -456,27 +515,28 @@ export function createCommands(host: CommandHost): ScopeCommand[] {
             : -1
     if (target < 0) return fail(`没有「${move}」这个位置`)
     list.splice(target, 0, item!)
-    const changed = await save({ ...cloneSettings(before), include: list })
+    const changed = await save({ ...cloneSettings(before), [field]: list })
     return ok([changed ? `已把 ${item} 移到第 ${target + 1} 位` : `${item} 已经在第 ${target + 1} 位`, `新列表：${list.join(' → ')}`].join('\n'))
   }
 
-  const removePriority = async (ask: Ask): Promise<CommandResult> => {
+  const removeFromList = async (ask: Ask, field: ListField): Promise<CommandResult> => {
+    const spec = LISTS[field]
     const before = host.read()
-    const labels = before.include.map((pattern, index) => `${index + 1}. ${pattern}`)
-    const answers = await ask(paged('entries', '移除', '勾选要从优先级列表删掉的条目', labels.map(label => ({ label })), true))
+    const labels = before[field].map((pattern, index) => `${index + 1}. ${pattern}`)
+    const answers = await ask(paged('entries', '移除', `勾选要从${spec.noun}删掉的条目`, labels.map(label => ({ label })), true))
     const picked = pagedSelection(answers, 'entries')
     if (picked.length === 0) return ok('没有勾选任何条目，设置没有变化')
     const removed = new Set<number>()
     for (const value of picked) {
       let index = labels.indexOf(value)
-      if (index < 0) index = before.include.findIndex(pattern => samePattern(pattern, value))
-      if (index < 0) return fail(`优先级列表里没有「${value}」`)
+      if (index < 0) index = before[field].findIndex(pattern => samePattern(pattern, value))
+      if (index < 0) return fail(`${spec.noun}里没有「${value}」`)
       removed.add(index)
     }
-    const list = before.include.filter((_, index) => !removed.has(index))
-    await save({ ...cloneSettings(before), include: list })
-    const lines = [`已从优先级列表移除 ${removed.size} 条`, `新列表：${list.length > 0 ? list.join(' → ') : '空'}`]
-    if (before.mode === 'include') lines.push('include 模式下，只被这些条目选中的模型现在会被隐藏。')
+    const list = before[field].filter((_, index) => !removed.has(index))
+    await save({ ...cloneSettings(before), [field]: list })
+    const lines = [`已从${spec.noun}移除 ${removed.size} 条`, `新列表：${list.length > 0 ? list.join(' → ') : '空'}`]
+    if (field === 'include' && before.mode === 'include') lines.push('include 模式下，只被这些条目选中的模型现在会被隐藏。')
     return ok(lines.join('\n'))
   }
 
@@ -570,8 +630,9 @@ export function createCommands(host: CommandHost): ScopeCommand[] {
   }
 
   /** `hide|show|top <pattern…>` shortcuts. */
-  const patternShortcut = async (verb: 'hide' | 'show' | 'top', patterns: string[]): Promise<CommandResult> => {
-    if (patterns.length === 0) return fail(`缺少规则 · ${USAGE.split('\n')[verb === 'hide' ? 3 : verb === 'show' ? 4 : 5]!.trim()}`)
+  const patternShortcut = async (verb: 'hide' | 'show' | 'top' | 'fav' | 'unfav', patterns: string[]): Promise<CommandResult> => {
+    const usageLine = USAGE.split('\n').find(line => line.startsWith(`/model-scope ${verb} `))?.trim() ?? USAGE
+    if (patterns.length === 0) return fail(`缺少规则 · ${usageLine}`)
     const before = host.read()
     const draft = cloneSettings(before)
     for (const pattern of patterns) {
@@ -582,6 +643,16 @@ export function createCommands(host: CommandHost): ScopeCommand[] {
       for (const pattern of patterns) if (!draft.exclude.some(item => samePattern(item, pattern))) draft.exclude.push(pattern)
       const changed = await save(draft)
       return ok(changed ? `已隐藏：${patterns.join('、')}` : '这些规则已经在隐藏列表里了')
+    }
+    if (verb === 'fav') {
+      for (const pattern of patterns) if (!draft.favorites.some(item => samePattern(item, pattern))) draft.favorites.push(pattern)
+      const changed = await save(draft)
+      return ok([changed ? `已收藏：${patterns.join('、')}` : '这些规则已经在收藏里了', `收藏：${draft.favorites.join(' → ')}`, FAVORITE_USAGE].join('\n'))
+    }
+    if (verb === 'unfav') {
+      for (const pattern of patterns) draft.favorites = withoutPattern(draft.favorites, pattern)
+      const changed = await save(draft)
+      return ok([changed ? `已取消收藏：${patterns.join('、')}` : '设置没有变化：这些规则不在收藏里', `收藏：${draft.favorites.length > 0 ? draft.favorites.join(' → ') : '空'}`].join('\n'))
     }
     if (verb === 'top') {
       let include = draft.include
@@ -607,7 +678,8 @@ export function createCommands(host: CommandHost): ScopeCommand[] {
     const { shown, total } = summary(catalog, new Scope(settings))
     const actions: Array<{ label: string; description: string; run: () => Promise<CommandResult> }> = [
       { label: '显示/隐藏模型', description: `按 provider 勾选 · 现在显示 ${shown}/${total}`, run: () => toggle(ask, current) },
-      { label: '调整模型优先级', description: `优先级列表 ${settings.include.length} 条`, run: () => priority(ask) },
+      { label: '调整模型优先级', description: `优先级列表 ${settings.include.length} 条`, run: () => listMenu(ask, 'include') },
+      { label: '收藏与轮切', description: settings.favorites.length > 0 ? `收藏 ${settings.favorites.length} 条 · 快捷键或 /fav-next 轮切` : '收藏常用模型，用快捷键在它们之间轮切', run: () => listMenu(ask, 'favorites') },
       { label: '调整 provider 顺序', description: settings.providerOrder.length > 0 ? settings.providerOrder.join(' → ') : '默认顺序', run: () => providers(ask) },
       { label: '切换模式', description: `当前 ${settings.mode}`, run: () => mode(ask) },
       { label: '查看状态', description: '每个 provider 显示了哪些模型', run: status },
@@ -624,7 +696,7 @@ export function createCommands(host: CommandHost): ScopeCommand[] {
   return [{
     name: 'model-scope',
     description: '模型范围：选择模型选择器显示哪些模型、按什么顺序（不带参数打开菜单）',
-    hint: '[status | hide | show | top | mode | reset]',
+    hint: '[status | hide | show | top | fav | unfav | mode | reset]',
     async run({ args, current, ask }) {
       const [verb, ...rest] = words(args)
       try {
@@ -637,7 +709,10 @@ export function createCommands(host: CommandHost): ScopeCommand[] {
           case 'hide':
           case 'show':
           case 'top':
-            return await patternShortcut(verb.toLowerCase() as 'hide' | 'show' | 'top', rest)
+          case 'unfav':
+            return await patternShortcut(verb.toLowerCase() as 'hide' | 'show' | 'top' | 'unfav', rest)
+          case 'fav':
+            return rest.length === 0 ? await listMenu(ask, 'favorites') : await patternShortcut('fav', rest)
           case 'mode': {
             const value = rest[0]?.toLowerCase()
             if (value === undefined) return await mode(ask)

@@ -110,3 +110,13 @@ test('invalid patterns are reported and ignored; unknown shapes pass through', (
   const odd = { groups: [{ id: 'x', models: 'nope' }] }
   assert.equal(scopeCatalog(odd, s), odd)
 })
+
+test('favorites get a star in the catalog, once, and only when markFavorites is on', () => {
+  const marked = scopeCatalog(catalog(), scope({ favorites: ['cpa-home/gpt-5.5', 'claude-*'] }))
+  const names = marked.groups.flatMap(group => group.models.map(model => model.name))
+  assert.deepEqual(names, ['Chat', 'Reasoner', 'GPT-5.4', '★ GPT-5.5', 'Image', 'Luna', '★ Claude X', 'Image 1'])
+  assert.equal(scopeCatalog(marked, scope({ favorites: ['cpa-home/gpt-5.5'] })).groups[1]!.models[1]!.name, '★ GPT-5.5', 'no double star')
+  const plain = catalog()
+  assert.equal(scopeCatalog(plain, scope({ favorites: ['cpa-home/gpt-5.5'], markFavorites: false })), plain, 'identity when not marking')
+  assert.equal(scope({ favorites: ['/(/'] }).issues.length, 1)
+})

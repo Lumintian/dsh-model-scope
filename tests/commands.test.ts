@@ -252,3 +252,51 @@ test('shortcuts validate patterns; unknown verbs show usage; cards unavailable f
   assert.match(result.text.split('\n')[0]!, /作用于本 profile 的模型列表/)
   assert.match(result.text, /这个界面不能弹出卡片/)
 })
+
+test('favorites: add from the menu, reorder, shortcuts, status', async () => {
+  const app = setup()
+  let result = await app.run('',
+    () => [pick('action', '收藏与轮切')],
+    (questions) => {
+      assert.match(questions[0]!.question, /当前：空/)
+      return [pick('action', '添加模型')]
+    },
+    () => [pick('provider', 'cpa-home')],
+    (questions) => {
+      assert.equal(questions[1]!.options![1]!.label, '最后')
+      return [pick('models', 'gpt-6-luna', 'gpt-5.5'), pick('where', '最后')]
+    },
+  )
+  assert.equal(result.text.split('\n')[0], '已把 2 个模型加到收藏末尾')
+  assert.match(result.text, /Ctrl\+Alt\+M/)
+  assert.deepEqual(app.settings().favorites, ['cpa-home/gpt-5.5', 'cpa-home/gpt-6-luna'])
+
+  result = await app.run('fav openrouter/claude-x cpa-home/gpt-5.5')
+  assert.equal(result.text.split('\n')[0], '已收藏：openrouter/claude-x、cpa-home/gpt-5.5')
+  assert.deepEqual(app.settings().favorites, ['cpa-home/gpt-5.5', 'cpa-home/gpt-6-luna', 'openrouter/claude-x'])
+
+  await app.run('fav',
+    () => [pick('action', '调整一条的位置')],
+    () => [pick('entry', '3. openrouter/claude-x'), pick('move', '移到最前')],
+  )
+  assert.deepEqual(app.settings().favorites, ['openrouter/claude-x', 'cpa-home/gpt-5.5', 'cpa-home/gpt-6-luna'])
+
+  const status = await app.run('status')
+  assert.match(status.text.split('\n')[0]!, / · 收藏 3 条 · /)
+  assert.ok(status.text.includes('收藏（favorites，轮切顺序）：1. openrouter/claude-x  2. cpa-home/gpt-5.5  3. cpa-home/gpt-6-luna'))
+  assert.ok(status.text.includes('★gpt-5.5'))
+
+  // The show/hide card marks favorites.
+  await app.run('',
+    () => [pick('action', '显示/隐藏模型')],
+    () => [pick('provider', 'cpa-home')],
+    (questions) => {
+      assert.match(questions[0]!.options!.find(o => o.label === 'gpt-5.5')!.description!, /★ 收藏/)
+      return [pick('hide')]
+    },
+  )
+
+  result = await app.run('unfav cpa-home/gpt-5.5')
+  assert.equal(result.text.split('\n')[0], '已取消收藏：cpa-home/gpt-5.5')
+  assert.deepEqual(app.settings().favorites, ['openrouter/claude-x', 'cpa-home/gpt-6-luna'])
+})
