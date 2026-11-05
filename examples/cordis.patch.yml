@@ -13,6 +13,10 @@
       - '*/gpt-image-*'
       - '/-(preview|exp)$/i'      # 正则：以 -preview 或 -exp 结尾的
     providerOrder: [cpa-home, openrouter]
+    favorites:                    # 收藏：Ctrl+Alt+M 按这个顺序轮切，/fav 直接挑
+      - 'cpa-home/gpt-5.5'
+      - 'cpa-home/gpt-6-luna'
+      - 'deepseek-official/deepseek-chat'
 
 # 2. 白名单：只显示这几个模型，按这个顺序。
 # - id: model-scope

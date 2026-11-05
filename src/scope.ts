@@ -15,7 +15,7 @@
  *   original order.
  */
 
-import type { ScopeSettings } from './config.ts'
+import { FAVORITE_MARK, type ScopeSettings } from './config.ts'
 
 export interface ModelRef {
   provider: string
@@ -87,12 +87,14 @@ export class Scope {
   readonly issues: string[] = []
   private readonly include: CompiledPattern[]
   private readonly exclude: CompiledPattern[]
+  private readonly favorites: CompiledPattern[]
   private readonly providerRank: Map<string, number>
 
   constructor(settings: ScopeSettings) {
     this.settings = settings
     this.include = compile(settings.include, 'include', this.issues)
     this.exclude = compile(settings.exclude, 'exclude', this.issues)
+    this.favorites = compile(settings.favorites, 'favorites', this.issues)
     this.providerRank = new Map()
     settings.providerOrder.forEach((id, index) => {
       const key = id.trim().toLowerCase()
@@ -103,7 +105,17 @@ export class Scope {
   /** Whether this scope changes nothing at all. */
   get isIdentity(): boolean {
     return this.include.length === 0 && this.exclude.length === 0 && this.providerRank.size === 0
-      && this.settings.mode === 'all'
+      && this.settings.mode === 'all' && !this.marksFavorites
+  }
+
+  /** Whether favorite names get the ★ marker. */
+  get marksFavorites(): boolean {
+    return this.settings.markFavorites && this.favorites.length > 0
+  }
+
+  /** Index of the first `favorites` pattern the model matches. */
+  favoriteIndex(ref: ModelRef): number | undefined {
+    return this.favorites.find(pattern => matches(pattern, ref))?.index
   }
 
   /** Index of the first `include` pattern the model matches. */
@@ -217,8 +229,14 @@ export function defaultOf(catalog: { default?: unknown }): ModelRef | undefined 
 export function scopeCatalog<T>(catalog: T, scope: Scope): T {
   if (scope.isIdentity || !isCatalog(catalog)) return catalog
   const defaultRef = defaultOf(catalog)
+  const mark = (provider: string) => <M extends CatalogModelLike>(model: M): M => {
+    if (!scope.marksFavorites || scope.favoriteIndex({ provider, model: model.id }) === undefined) return model
+    const name = (model as { name?: unknown }).name
+    if (typeof name !== 'string' || name.startsWith(FAVORITE_MARK)) return model
+    return { ...model, name: `${FAVORITE_MARK} ${name}` }
+  }
   const groups = catalog.groups
-    .map(group => ({ ...group, models: scope.orderModels(group.id, group.models, model => model.id, defaultRef) }))
+    .map(group => ({ ...group, models: scope.orderModels(group.id, group.models, model => model.id, defaultRef).map(mark(group.id)) }))
     .filter(group => group.models.length > 0)
   const visible = new Map(groups.map(group => [group.id, group.models.map(model => model.id)]))
   return { ...catalog, groups: scope.orderProviders(groups, group => group.id, id => visible.get(id)) }

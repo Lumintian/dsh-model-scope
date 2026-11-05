@@ -9,3 +9,5 @@
         exclude: []
         providerOrder: []
         keepDefault: true
+        favorites: []
+        markFavorites: true
